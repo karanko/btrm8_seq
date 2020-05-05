@@ -63,12 +63,15 @@ class PageManager:
 			print("Page %s does not exist only"% (number))	
 		self.draw()
 		return res
-	def senddatatopd(self):
-		page = self.currentpage()
+	def senddatatopd(self, index):
 		try:
+			page = self.pages[index]
 			ugly_data = str( numpy.matrix(page.outputarray)).replace('[','').replace(']','').split('\n')
+			suffix = ""
+			if index > 4:
+				suffix = "2"
 			for i in range(len(ugly_data)):
-				self.sendfudi("apcmini " + page.name + " " + str(i) + " data " + ugly_data[i] ,3000)
+				self.sendfudi("apcmini " + page.name + suffix+" " + str(i) + " data " + ugly_data[i] ,3000)
 		except Exception, e:
 			print("An exception occurred: %s" % (e))
 	def draw(self):
@@ -81,9 +84,12 @@ class PageManager:
 					self.setbuttonstate(i,0)
 			for x in range(68, 72):
 				self.setbuttonstate( x , 0 )
-			self.setbuttonstate(68+self.currentpage_index, 1 )
+			if self.currentpage_index > 3:
+				self.setbuttonstate(68+(self.currentpage_index%4), 2 )
+			else:
+				self.setbuttonstate(68+(self.currentpage_index%4), 1 )
 			#not sure if this is the right place
-			self.senddatatopd()
+			self.senddatatopd(self.currentpage_index)
 		except Exception, e:
 			print("An exception occurred: %s" % (e))
 	def setbuttonstate(self,pad,state):
@@ -102,7 +108,14 @@ class PageManager:
 					self.draw()
 				elif 68 <= message[1] <= 71 and message[0] == 144:
 					##page selcection
-					self.setpage(message[1] - 68)
+					if self.shiftdown :
+						self.setpage(message[1] - 68 + 4)
+					else:
+						self.setpage(message[1] - 68 )					
+				elif message[1] == 84:
+					if self.shiftdown and message[0] == 128:
+						return
+					self.swappages()
 				elif message[1] == 89:
 					self.stopallclips(message[0] == 144)
 					self.setbuttonstate( message[1] , int( message[0] == 144) )
@@ -116,6 +129,19 @@ class PageManager:
 				print("PageManager: Unhandled msg: %r" % ( message ))
 		except Exception, e:
 			print("An exception occurred: %s" % (e))
+	def swappages(self):
+		for i in range(4):
+			cpi= i
+			npi =  (i + 4 ) %8
+			cp = self.pages[cpi]
+			self.pages[cpi] = self.pages[npi]
+			self.pages[npi] = cp
+		for i in range(len(self.pages)):
+			self.senddatatopd(i)
+		#self.currentpage_index =npi
+		self.draw()
+		#print("c:%s n:%s" % (cp,np))
+
 def metro_rep_press_cb(page,pad):
 	for p in range(64):
 		col = p % 8
@@ -186,6 +212,10 @@ pm.addpage("metropolis_gate_dual",metro_gate_data_cb,metro_gate_press_cb,2)
 pm.addpage("metropolis_pitch",metro_rep_data_cb,metro_rep_press_cb)
 pm.addpage("std_seq_x4",std_data_cb,std_press_cb,4)
 
+pm.addpage("metropolis_repeats",metro_rep_data_cb,metro_rep_press_cb)
+pm.addpage("metropolis_gate_dual",metro_gate_data_cb,metro_gate_press_cb,2)
+pm.addpage("metropolis_pitch",metro_rep_data_cb,metro_rep_press_cb)
+pm.addpage("std_seq_x4",std_data_cb,std_press_cb,4)
 
 pm.setpage(0)
 
