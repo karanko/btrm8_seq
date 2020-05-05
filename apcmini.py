@@ -3,6 +3,7 @@ import time
 import socket
 #from midi import MidiConnector #py-midi
 import rtmidi #python-rtmidi
+import numpy
 
 class Page:
 	def __init__(self, name):
@@ -22,13 +23,10 @@ class Page:
 		else:
 			for cb in self.__press_callbacks:
 				cb(self,x)
-
-		print("grid %r %s" % ( x,self.grid[x]) )
 	def addpresscallback(self,externalcallback):
 		self.__press_callbacks.append(externalcallback);
 	def adddatacallback(self,externalcallback):
 		self.__data_callbacks.append(externalcallback);	
-
 class PageManager:
 	def __init__(self):
 		##other stuff
@@ -58,7 +56,11 @@ class PageManager:
 			print("Page %s does not exist only"% (number))	
 		self.draw()
 		return res
-		
+	def senddatatopd(self):
+		page = self.currentpage()
+		ugly_data = str( numpy.matrix(page.outputarray)).replace('[','').replace(']','').split('\n')
+		for i in range(len(ugly_data)):
+			self.sendfudi("apcmini " + page.name + " " + str(i) + " data " + ugly_data[i] ,3000)
 	def draw(self):
 		for i in range(len(self.currentpage().grid)):
 			if self.currentpage().grid[i]:
@@ -68,7 +70,8 @@ class PageManager:
 		for x in range(68, 72):
 			self.setbuttonstate( x , 0 )
 		self.setbuttonstate(68+self.currentpage_index, 1 )
-
+		#not sure if this is the right place
+		self.senddatatopd()
 	def setbuttonstate(self,pad,state):
 			#we only need to send note ons to avoid traffic
 			midiout.send_message([144 & 0xF0 | 0 & 0xF, pad & 0x7F , state& 0x7F])
@@ -89,13 +92,12 @@ class PageManager:
 			elif message[1] == 89:
 				self.stopallclips(message[0] == 144)
 				self.setbuttonstate( message[1] , int( message[0] == 144) )
-			else:
-				print("note %r" % ( message))
+			#else:
+				#print("note %r" % ( message))
 		elif message[0] == 176:             	
 			self.sendfudi("apcmini fader " + str(message[1] - 48) + " " + str(message[2])  , 3000)
 		else:
 			print("PageManager: Unhandled msg: %r" % ( message ))
-
 
 ## setup out
 midiout = rtmidi.MidiOut()
@@ -138,9 +140,7 @@ def metro_rep_data_cb(page,pad):
 		page.outputarray = [0] * 8
 	col = pad % 8
 	row = (pad / 8) 
-	print("r:%s c:%r" % (row, col))
 	page.outputarray[col] = row
-	print(page.outputarray)
 mr.adddatacallback( metro_rep_data_cb)
 
 ##rpage 1
@@ -163,10 +163,7 @@ def metro_gate_data_cb(page,pad):
 	col = pad % 8
 	row = (pad / 8) % 4
 	sec =  int(pad < 32) 
-	print("r:%s c:%r s:%s " % (row, col, sec))
 	page.outputarray[sec][col] = row
-	print(page.outputarray[0])
-	print(page.outputarray[1])
 dg.adddatacallback( metro_gate_data_cb)
 
 ##rpage 2
@@ -184,9 +181,7 @@ def metro_rep_data_cb(page,pad):
 		page.outputarray = [0] * 8
 	col = pad % 8
 	row = (pad / 8) 
-	print("r:%s c:%r" % (row, col))
 	page.outputarray[col] = row
-	print(page.outputarray)
 p.adddatacallback( metro_rep_data_cb)
 
 pm.setpage(0)

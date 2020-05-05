@@ -1,2 +1,1 @@
-for i in range(8):
-	print(i)
+print(type([0][0]))
