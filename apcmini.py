@@ -9,7 +9,7 @@ import numpy
 class Page:
 	def __init__(self, name):
 		self.name=  name
-		self.grid = [False] * 64
+		self.grid = [0] * 64
 		self.h_splits = 1
 		self.outputarray = []
 		self.__press_callbacks = []
@@ -21,7 +21,7 @@ class Page:
 			for cb in self.__data_callbacks:
 					cb(self,x)
 		if len(self.__press_callbacks) < 1:
-			self.grid[x] = not self.grid[x]
+			self.grid[x] = int(not self.grid[x])
 		else:
 			for cb in self.__press_callbacks:
 				cb(self,x)
@@ -33,6 +33,8 @@ class PageManager:
 	def __init__(self):
 		##other stuff
 		self.pages = []
+		self.mutepage = Page("mute")
+		self.mutepage.h_splits = 8
 		self.currentpage_index = 0
 		self.shiftdown = False
 		self.udpsocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -52,10 +54,12 @@ class PageManager:
 			workingpage.addpresscallback(presscallback)
 		return workingpage
 	def currentpage(self):
+		if self.currentpage_index == "mute":
+			return self.mutepage;
 		return self.pages[self.currentpage_index]
 	def setpage(self,number):
 		res = False
-		if 0 <= number < len(self.pages):
+		if number == "mute" or 0 <= number < len(self.pages) :
 			self.currentpage_index = number
 			print("Page %s (%s) selected"%(self.currentpage().name,self.currentpage_index))
 			res = True
@@ -64,34 +68,43 @@ class PageManager:
 		self.draw()
 		return res
 	def senddatatopd(self, index):
-		try:
+		if index == "mute":
+			page = self.mutepage;
+			ugly_data = ' '.join([str(i) for i in page.grid])
+			self.sendfudi("apcmini mute 0  data " + ugly_data ,3000)
+		else:
 			page = self.pages[index]
 			ugly_data = str( numpy.matrix(page.outputarray)).replace('[','').replace(']','').split('\n')
 			suffix = ""
-			if index > 4:
+			if index > 3:
 				suffix = "2"
 			for i in range(len(ugly_data)):
 				self.sendfudi("apcmini " + page.name + suffix+" " + str(i) + " data " + ugly_data[i] ,3000)
-		except Exception, e:
-			print("An exception occurred: %s" % (e))
+			#print("suffix:%s index:%s,sel_index:%s"%(suffix,index,self.currentpage_index))
 	def draw(self):
-		try:
-			for i in range(len(self.currentpage().grid)):
-				if self.currentpage().grid[i]:
-					sub_page_offset = i / (64 / self.currentpage().h_splits ) 
-					self.setbuttonstate(i,((((self.currentpage_index + sub_page_offset) % 3) + 1) * 2)-1 )
-				else:
-					self.setbuttonstate(i,0)
-			for x in range(68, 72):
-				self.setbuttonstate( x , 0 )
+		pindex = self.currentpage_index 
+		if self.currentpage_index == "mute":
+			pindex = 0
+		for i in range(len(self.currentpage().grid)):
+			if self.currentpage().grid[i]:
+				sub_page_offset = i / (64 / self.currentpage().h_splits ) 
+				self.setbuttonstate(i,((((pindex+ sub_page_offset) % 3) + 1) * 2)-1 )
+			else:
+				self.setbuttonstate(i,0)
+		for x in range(68, 72):
+			self.setbuttonstate( x , 0 )
+		self.setbuttonstate( 85 , 0 )
+
+		if self.currentpage_index == "mute":
+			self.setbuttonstate(85 , 1)
+
+		else:
 			if self.currentpage_index > 3:
 				self.setbuttonstate(68+(self.currentpage_index%4), 2 )
 			else:
 				self.setbuttonstate(68+(self.currentpage_index%4), 1 )
-			#not sure if this is the right place
-			self.senddatatopd(self.currentpage_index)
-		except Exception, e:
-			print("An exception occurred: %s" % (e))
+		#not sure if this is the right place
+		self.senddatatopd(self.currentpage_index)
 	def setbuttonstate(self,pad,state):
 			#we only need to send note ons to avoid traffic
 			midiout.send_message([144 & 0xF0 | 0 & 0xF, pad & 0x7F , state& 0x7F])
@@ -107,15 +120,19 @@ class PageManager:
 					pm.currentpage().pressgrid(message[1])
 					self.draw()
 				elif 68 <= message[1] <= 71 and message[0] == 144:
-					##page selcection
-					if self.shiftdown :
-						self.setpage(message[1] - 68 + 4)
-					else:
-						self.setpage(message[1] - 68 )					
-				elif message[1] == 84:
+					##normal page selcection
+					self.setpage(message[1] - 68 + int(self.shiftdown) * 4)
+				elif message[1] in [85]  and message[0] == 144:
+					##mute page selcection
+					self.setpage("mute")				
+				elif message[1] == 88:
 					if self.shiftdown and message[0] == 128:
 						return
 					self.swappages()
+				elif message[1] == 87:
+					if self.shiftdown and message[0] == 128:
+						return
+					self.swappage(self.currentpage_index)				
 				elif message[1] == 89:
 					self.stopallclips(message[0] == 144)
 					self.setbuttonstate( message[1] , int( message[0] == 144) )
@@ -131,16 +148,22 @@ class PageManager:
 			print("An exception occurred: %s" % (e))
 	def swappages(self):
 		for i in range(4):
-			cpi= i
-			npi =  (i + 4 ) %8
+			self.swappage(i)
+		#	cpi= i
+		#	npi =  (cpi + 4 ) %8
+		#	cp = self.pages[cpi]
+		#	self.pages[cpi] = self.pages[npi]
+		#	self.pages[npi] = cp
+		#for i in range(8):
+		#	self.senddatatopd(i)
+	def swappage(self,index):
+			cpi= index
+			npi =  (cpi + 4 ) %8
 			cp = self.pages[cpi]
 			self.pages[cpi] = self.pages[npi]
 			self.pages[npi] = cp
-		for i in range(len(self.pages)):
-			self.senddatatopd(i)
-		#self.currentpage_index =npi
-		self.draw()
-		#print("c:%s n:%s" % (cp,np))
+			self.senddatatopd(cpi)
+			self.senddatatopd(npi)
 
 def metro_rep_press_cb(page,pad):
 	for p in range(64):
@@ -170,7 +193,7 @@ def metro_gate_data_cb(page,pad):
 	page.outputarray[sec][col] = row
 def std_press_cb(page,pad):
 	for p in range(64):
-		col = p % 16
+		col = (p + 8) % 16
 		sec =  p / 16
 		page.grid[p] = page.outputarray[sec][col]
 def std_data_cb(page,pad):
@@ -178,7 +201,7 @@ def std_data_cb(page,pad):
 		page.outputarray = [[]] * 4
 		for x in range(len(page.outputarray)):
 			page.outputarray[x] = [0] * 16
-	col = pad % 16
+	col = (pad + 8 )  % 16
 	sec = pad / 16 
 	page.outputarray[sec][col] = int(not bool(page.outputarray[sec][col]))
 
@@ -207,14 +230,14 @@ for i, j in enumerate(midiin.get_ports()):
 			sys.exit()
 					
 pm = PageManager()		
-pm.addpage("metropolis_repeats",metro_rep_data_cb,metro_rep_press_cb)
-pm.addpage("metropolis_gate_dual",metro_gate_data_cb,metro_gate_press_cb,2)
-pm.addpage("metropolis_pitch",metro_rep_data_cb,metro_rep_press_cb)
+pm.addpage("metropolis_repeats",metro_rep_data_cb,metro_rep_press_cb).pressgrid(0)
+pm.addpage("metropolis_gate_dual",metro_gate_data_cb,metro_gate_press_cb,2).pressgrid(0)
+pm.addpage("metropolis_pitch",metro_rep_data_cb,metro_rep_press_cb).pressgrid(0)
 pm.addpage("std_seq_x4",std_data_cb,std_press_cb,4)
 
-pm.addpage("metropolis_repeats",metro_rep_data_cb,metro_rep_press_cb)
-pm.addpage("metropolis_gate_dual",metro_gate_data_cb,metro_gate_press_cb,2)
-pm.addpage("metropolis_pitch",metro_rep_data_cb,metro_rep_press_cb)
+pm.addpage("metropolis_repeats",metro_rep_data_cb,metro_rep_press_cb).pressgrid(0)
+pm.addpage("metropolis_gate_dual",metro_gate_data_cb,metro_gate_press_cb,2).pressgrid(0)
+pm.addpage("metropolis_pitch",metro_rep_data_cb,metro_rep_press_cb).pressgrid(0)
 pm.addpage("std_seq_x4",std_data_cb,std_press_cb,4)
 
 pm.setpage(0)
